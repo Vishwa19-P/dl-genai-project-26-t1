@@ -541,30 +541,15 @@ st.set_page_config(page_title="Smart MCQ Solver", page_icon="🧠", layout="wide
 
 st.title("🧠 Smart MCQ Solver")
 st.write(
-    "A competition-trained MCQ ranking system with a knowledge-assisted "
-    "portfolio demo for arbitrary questions."
+    "A knowledge-assisted MCQ ranking system combining semantic retrieval, "
+    "Wikipedia evidence, and a pretrained MiniLM model."
 )
 
-mode = st.radio(
-    "Prediction mode",
-    [
-        "Knowledge-assisted demo (recommended)",
-        "Official competition v4 ensemble",
-    ],
-    horizontal=True,
+st.caption(
+    "The demo combines the competition-trained v4 ensemble with public "
+    "Wikipedia evidence and a pretrained MiniLM semantic model for stronger "
+    "performance on general MCQs."
 )
-
-if mode.startswith("Knowledge"):
-    st.caption(
-        "Demo mode combines the official v4 ensemble with public Wikipedia "
-        "evidence and a pretrained MiniLM semantic model. This improves "
-        "out-of-distribution questions without changing the official Kaggle model."
-    )
-else:
-    st.caption(
-        "This is the exact v4 ensemble used for the competition submission: "
-        "Logistic Ranking + Complement NB + Question-level TF-IDF + Heuristic + Rank SGD."
-    )
 
 with st.form("mcq_form"):
     prompt = st.text_area(
@@ -595,16 +580,9 @@ with st.form("mcq_form"):
             ):
                 try:
                     models = load_models()
-
-                    if mode.startswith("Knowledge"):
-                        ranked, used_knowledge, pages = knowledge_assisted_predict(
-                            prompt, options, models
-                        )
-                    else:
-                        ranked = predict_one(prompt, options, models)
-                        used_knowledge = False
-                        pages = []
-
+                    ranked, used_knowledge, pages = knowledge_assisted_predict(
+                        prompt, options, models
+                    )
                 except Exception as error:
                     st.error(
                         f"The model could not be loaded or executed: "
@@ -612,48 +590,37 @@ with st.form("mcq_form"):
                     )
                     st.stop()
 
-            if mode.startswith("Knowledge") and not used_knowledge:
-                st.warning(
-                    "External knowledge retrieval was unavailable, so the app "
-                    "fell back to the official v4 ensemble."
+            if not used_knowledge:
+                st.error(
+                    "Knowledge retrieval was unavailable for this question. "
+                    "Please try again."
                 )
+                st.stop()
 
             st.subheader("Top 3 Predictions")
 
             for rank, (_, row) in enumerate(ranked.head(3).iterrows(), start=1):
                 option = row["option"]
-                if mode.startswith("Knowledge"):
-                    score = row["final_demo_score"]
-                    score_label = "Demo score"
-                else:
-                    score = row["blend_score_v4"]
-                    score_label = "V4 ensemble score"
+                score = row["final_demo_score"]
 
                 st.success(
                     f"#{rank} — Option {option}  | "
-                    f"{score_label}: {score:.4f}"
+                    f"Demo score: {score:.4f}"
                 )
                 st.write(options[OPTION_COLS.index(option)])
 
             with st.expander("Show all five ranked options"):
-                if mode.startswith("Knowledge"):
-                    display_df = ranked[
-                        ["option", "final_demo_score", "knowledge_score", "blend_score_v4"]
-                    ].copy()
-                    display_df.columns = [
-                        "Option",
-                        "Demo Score",
-                        "Knowledge Score",
-                        "V4 Ensemble Score",
-                    ]
-                    for col in display_df.columns[1:]:
-                        display_df[col] = display_df[col].round(4)
-                else:
-                    display_df = ranked[["option", "blend_score_v4"]].copy()
-                    display_df.columns = ["Option", "V4 Ensemble Score"]
-                    display_df["V4 Ensemble Score"] = (
-                        display_df["V4 Ensemble Score"].round(4)
-                    )
+                display_df = ranked[
+                    ["option", "final_demo_score", "knowledge_score", "blend_score_v4"]
+                ].copy()
+                display_df.columns = [
+                    "Option",
+                    "Demo Score",
+                    "Knowledge Score",
+                    "V4 Ensemble Score",
+                ]
+                for col in display_df.columns[1:]:
+                    display_df[col] = display_df[col].round(4)
 
                 st.dataframe(
                     display_df,
@@ -667,13 +634,11 @@ with st.form("mcq_form"):
                         "The demo used these public Wikipedia pages as evidence:"
                     )
                     for page in pages:
-                        st.markdown(
-                            f"- [{page['title']}]({page['url']})"
-                        )
+                        st.markdown(f"- [{page['title']}]({page['url']})")
 
 st.divider()
 st.caption(
-    "Official Kaggle model: v4 ensemble. "
-    "The knowledge-assisted mode is a separate portfolio/demo layer and "
-    "does not alter the submitted Kaggle model or its W&B results."
+    "Portfolio demo uses the competition v4 ensemble as one internal signal "
+    "alongside knowledge retrieval and MiniLM semantics. The submitted Kaggle "
+    "model and its W&B results remain unchanged."
 )
