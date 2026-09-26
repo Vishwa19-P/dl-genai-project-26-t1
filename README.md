@@ -1,113 +1,51 @@
-# 🧠 Smart MCQ Solver
+# Smart MCQ Solver
 
-A competition-trained multiple-choice question ranking system with a **knowledge-assisted Streamlit demo** for general MCQs.
+A machine learning project for ranking answer options for multiple-choice questions. The project was developed as part of the IIT Madras BS Data Science DL/GenAI project and was evaluated through Kaggle.
 
-The project was developed for the IIT Madras BS Degree **DL/GenAI project** and combines classical NLP ranking models, engineered lexical features, a pretrained MiniLM semantic baseline, and a weighted ensemble. The final competition pipeline was evaluated with grouped validation and submitted to Kaggle. A separate knowledge-assisted deployment layer uses public Wikipedia evidence and MiniLM semantic similarity to make the interactive demo more useful on arbitrary questions.
+The main goal was to build a system that takes a question with five answer options and ranks the options, returning the top three. I experimented with several text-based models and feature-based approaches before combining the strongest signals into the final v4 ensemble.
 
----
+The project also includes a Streamlit demo. The competition model is kept as the main experimental result, while the deployed demo adds semantic similarity and public knowledge retrieval so that it can handle general questions more naturally.
 
-## 🚀 Live Demo
+## Live Demo
 
-**Streamlit:** https://smart-mcq-solver-vishwa.streamlit.app
+Streamlit: https://smart-mcq-solver-vishwa.streamlit.app
 
-Enter one question and five answer options. The application returns the **top 3 ranked options**, score breakdowns, and the public knowledge sources used by the demo.
+The demo accepts one question and five answer options and returns the top three predictions. It also shows the scores used for ranking and the public sources retrieved for the question.
 
-> **Important:** The deployed Streamlit application is a portfolio/demo layer. The official Kaggle submission remains the competition-trained v4 ensemble documented in the notebook.
+## Project Objective
 
----
+The task is to rank five candidate answers for each multiple-choice question.
 
-## 📌 Project Overview
+The project covers the complete workflow:
 
-### Problem
+- data preparation
+- text normalization
+- feature engineering
+- model training
+- model comparison
+- grouped cross-validation
+- ensemble learning
+- experiment tracking with Weights & Biases
+- Kaggle submission and evaluation
+- Streamlit deployment
 
-Given a multiple-choice question and five candidate answers, rank the options and return the top three predictions.
+## Dataset
 
-### Objective
-
-Build an end-to-end MCQ ranking pipeline that:
-
-- preprocesses question and option text,
-- constructs candidate-level lexical and statistical features,
-- trains multiple ranking/classification models,
-- evaluates models using question-grouped validation,
-- tracks experiments with Weights & Biases (W&B),
-- combines complementary signals into a final ensemble,
-- generates a Kaggle submission, and
-- exposes the project through an interactive Streamlit application.
-
----
-
-## 🏗️ End-to-End Architecture
-
-```text
-                    ┌──────────────────────┐
-                    │   MCQ Question +     │
-                    │   Five Answer       │
-                    │   Options            │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ Text Normalization   │
-                    │ + Feature Engineering│
-                    └──────────┬───────────┘
-                               │
-              ┌────────────────┼─────────────────┐
-              │                │                 │
-              ▼                ▼                 ▼
-       Logistic Ranking   Complement NB     Rank SGD
-              │                │                 │
-              └────────────────┼─────────────────┘
-                               │
-                               ▼
-                    Question-level TF-IDF
-                         Classifier
-                               │
-                               ▼
-                       Heuristic Signal
-                               │
-                               ▼
-                    Per-question normalization
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │   V4 Weighted        │
-                    │   Ensemble           │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                       Top-3 Predictions
-
-        Streamlit demo adds an independent knowledge layer:
-
-        Question → Wikipedia Retrieval → MiniLM Semantic Score
-                              │
-                              ▼
-                     Knowledge-assisted
-                         Demo Ranking
-```
-
----
-
-## 📊 Dataset
-
-The project uses the Kaggle **Smart MCQ Solver Challenge** dataset:
+The project uses the dataset provided for the Kaggle Smart MCQ Solver Challenge:
 
 - `train.csv`
 - `test.csv`
 - `sample_submission.csv`
 
-The task is a ranking problem: each question has five candidate options and the system must identify the strongest answers.
+Each question has five candidate options. The competition requires the system to rank the options and return the top three.
 
-The dataset files are kept in the private repository for reproducibility.
+The dataset is included in the private repository because the application and notebook use it for reproducibility.
 
----
+## Text Preprocessing
 
-## 🧹 Text Preprocessing
+Questions and options are normalized before feature extraction.
 
-The pipeline applies consistent normalization to questions and options using a `normalize_text` function.
-
-Main steps include:
+The main preprocessing steps are:
 
 1. Unicode normalization using NFKD.
 2. Conversion to ASCII-compatible text.
@@ -115,15 +53,13 @@ Main steps include:
 4. Removal of non-alphanumeric characters.
 5. Whitespace normalization.
 
-This creates a consistent representation for lexical and statistical feature extraction.
+This gives the different models a consistent text representation.
 
----
+## Feature Engineering
 
-## 🧩 Feature Engineering
+I created features that measure how closely an option is related to the question.
 
-The candidate-level feature set captures multiple forms of question-option compatibility.
-
-### Lexical features
+The feature set includes:
 
 - token overlap
 - Jaccard similarity
@@ -132,181 +68,157 @@ The candidate-level feature set captures multiple forms of question-option compa
 - IDF-weighted overlap
 - rare-token overlap
 - bigram overlap
-- token uniqueness relative to the other options
+- token uniqueness compared with other options
 - relative option length
-
-### Linguistic / structural signals
-
 - number consistency
-- negation indicators
-- prompt-option relationships
-- question-level candidate structure
+- negation-related features
 
-The IDF statistics are calculated from the prepared corpus so that rare, informative tokens receive greater weight than common tokens.
+These features are calculated for each question-option pair and are used by the ranking models.
 
----
+## Models Tried
 
-## 🤖 Models Explored
+### Logistic Ranking
 
-### 1. Logistic Ranking
+A logistic regression model is trained on question-option features and produces a probability for each candidate.
 
-A feature-based logistic ranking model predicts the probability that a candidate option is the correct answer.
+### Complement Naive Bayes
 
-### 2. Complement Naive Bayes
+Complement Naive Bayes provides a different probabilistic model and adds another independent signal to the ensemble.
 
-Complement Naive Bayes provides a different probabilistic view of candidate correctness and adds diversity to the ensemble.
+### Question-level TF-IDF Model
 
-### 3. Question-level TF-IDF Classifier
+A TF-IDF representation of the question is used to predict which option is most likely to be correct.
 
-A question-level TF-IDF model predicts the correct option from the question text itself.
+### Rank SGD
 
-### 4. Rank SGD
+A stochastic-gradient ranking model was also used as part of the final ensemble.
 
-A stochastic-gradient ranking model provides another independent ranking signal.
+### Question SVD + Logistic Regression
 
-### 5. Question SVD + Logistic Regression
+I also experimented with reducing the question representation using SVD followed by logistic regression. This was useful during experimentation but was not included in the final v4 blend.
 
-A dimensionality-reduced question representation was also explored during experimentation. Its signal was ultimately excluded from the final v4 blend.
+### Pretrained MiniLM
 
-### 6. Pretrained MiniLM
+`all-MiniLM-L6-v2` was evaluated as a standalone pretrained semantic baseline. It was not included in the official v4 Kaggle submission.
 
-`all-MiniLM-L6-v2` was evaluated as a standalone semantic similarity baseline. It was **not included in the official v4 Kaggle blend**.
+## Final V4 Ensemble
 
----
+The final competition submission uses five signals:
 
-## 🧠 Final V4 Ensemble
-
-The final code-backed competition submission combines five normalized signals:
-
-| Component | Weight |
-|---|---:|
-| Feature-based Logistic Ranking | 0.33 |
-| Complement Naive Bayes Ranking | 0.22 |
-| Question-level TF-IDF Classifier | 0.30 |
-| Hand-designed Heuristic | 0.10 |
+| Model / Signal | Weight |
+| --- | ---: |
+| Logistic Ranking | 0.33 |
+| Complement Naive Bayes | 0.22 |
+| Question-level TF-IDF model | 0.30 |
+| Hand-designed heuristic | 0.10 |
 | Rank SGD | 0.05 |
+
+Before combining the signals, the scores are normalized within each question.
 
 The final score is:
 
 ```text
-0.33 × rank_logreg_score_norm
-+ 0.22 × rank_nb_score_norm
-+ 0.30 × question_prob_norm
-+ 0.10 × heuristic_score_norm
-+ 0.05 × rank_sgd_score_norm
+0.33 * Logistic Ranking
++ 0.22 * Complement Naive Bayes
++ 0.30 * Question-level TF-IDF
++ 0.10 * Heuristic
++ 0.05 * Rank SGD
 ```
 
-The scores are normalized within each question before blending so that the component models operate on comparable scales.
+The five options are then sorted by the final score and the top three are returned.
 
-The five options are then ranked and the top three are returned.
+## Validation
 
----
+A question has five related options, so splitting individual options between training and validation can cause leakage.
 
-## 🔬 Validation Strategy
-
-A major concern in MCQ ranking is question-level leakage: the five options belonging to the same question must not be split across training and validation folds.
-
-The project therefore uses:
+To avoid this, I used:
 
 ```python
 GroupKFold(n_splits=5)
 ```
 
-with the **question ID as the grouping variable**.
+with the question ID as the group.
 
-This ensures that all options from a particular question remain together in either the training or validation partition.
+This keeps all five options belonging to the same question in the same fold.
 
 ### Final v4 held-out validation
 
 | Metric | Result |
-|---|---:|
+| --- | ---: |
 | Validation questions | 2,000 |
 | Top-1 Accuracy | 0.9975 |
 | Macro F1 | 0.9972 |
 | MAP@3 | 0.9980 |
 
-These are grouped local validation results and **must not be interpreted as Kaggle leaderboard scores**.
+These are local grouped validation results. They are not Kaggle leaderboard scores.
 
----
+## Kaggle Results
 
-## 🏆 Kaggle Results
-
-The final competition submission history produced the following confirmed public scores:
+The main submission versions produced these public scores:
 
 | Submission | Public Score |
-|---|---:|
+| --- | ---: |
 | Earlier submission | 0.75228 |
 | V2 | 0.75685 |
-| V3 — initial | 0.74937 |
-| V3 — revised | **0.75810** |
-| V4 | **0.75810** |
+| V3 (initial) | 0.74937 |
+| V3 (revised) | 0.75810 |
+| V4 | 0.75810 |
 
-### Final selected submission
+The selected final v4 submission was:
 
-**`submission_main_model_v4.csv`**
+`submission_main_model_v4.csv`
+
+Its recorded scores were:
 
 - Public Score: **0.75810**
 - Private Score: **0.74747**
-- Selected for the final leaderboard evaluation: **Yes**
+- Selected for final leaderboard evaluation: **Yes**
 
-The v4 result is tied with the revised v3 submission for the best confirmed public score in the project.
+The v4 result is tied with the revised v3 submission for the best confirmed public score in this project.
 
----
+## Weights & Biases
 
-## 📈 Experiment Tracking — Weights & Biases
+The final W&B project is:
 
-The official W&B project is:
+`25f2004951-t22026`
 
-```text
-25f2004951-t22026
-```
+The main runs are:
 
-The final project execution contains four relevant runs:
+- `scratch-logistic-ranking`
+- `complement-nb-ranking`
+- `pretrained-minilm-semantic`
+- `final-v4-ensemble-validation`
 
-| Run | Purpose |
-|---|---|
-| `scratch-logistic-ranking` | Feature-based ranking model |
-| `complement-nb-ranking` | Complement Naive Bayes model |
-| `pretrained-minilm-semantic` | Standalone pretrained semantic baseline |
-| `final-v4-ensemble-validation` | Final v4 grouped validation |
+The W&B API key is not stored in the repository. It is supplied through a secret called:
 
-W&B authentication is handled through a secret-managed `WANDB_API_KEY`. **No API key is stored in this repository.**
+`WANDB_API_KEY`
 
----
+## Streamlit Demo
 
-## 🌐 Streamlit Knowledge-Assisted Demo
+The deployed application is slightly different from the competition submission.
 
-The deployed application is designed as a more practical portfolio interface than the raw competition pipeline.
+The official v4 model was built for the Kaggle dataset and its distribution. If an unrelated general-knowledge question is entered, the competition model alone may not have enough information to answer it correctly.
 
-It combines:
+For the public demo, I added:
 
-1. the competition-trained v4 ensemble as one internal signal,
-2. public Wikipedia evidence retrieval,
-3. pretrained `all-MiniLM-L6-v2` semantic similarity, and
-4. a combined demo score.
+- Wikipedia-based knowledge retrieval
+- MiniLM semantic similarity
+- the v4 ensemble as one of the ranking signals
 
-The application displays:
+The demo combines these signals and displays:
 
-- top 3 predictions,
-- demo score,
-- knowledge score,
-- v4 ensemble contribution, and
-- retrieved Wikipedia sources.
+- top three predictions
+- demo score
+- knowledge score
+- v4 ensemble score
+- retrieved knowledge sources
 
-### Why a separate demo layer?
+This keeps the competition pipeline separate while making the deployed application more useful for normal MCQ examples.
 
-The official Kaggle model is optimized for the competition's data distribution. A random general-knowledge question can be outside that distribution. The deployed demo therefore adds external evidence and semantic retrieval instead of presenting the competition model as a general-purpose knowledge model.
-
-This separation keeps the competition result reproducible while making the public demo substantially more useful.
-
----
-
-## 🧪 Example
-
-For an input such as:
+For example, a question such as:
 
 ```text
-Question: Who invented Newton's laws?
+Who invented Newton's laws?
 
 A. Einstein
 B. Newton
@@ -315,202 +227,145 @@ D. Pauli
 E. Vishwa
 ```
 
-the knowledge-assisted demo retrieves relevant public Wikipedia pages such as **Newton's laws of motion** and **Isaac Newton**, and ranks **Option B — Newton** first.
+is handled using retrieved evidence about Newton and semantic matching, with Option B ranked first in the tested demo.
 
----
-
-## 📁 Repository Structure
+## Repository Structure
 
 ```text
 dl-genai-project-26-t1/
-│
+|
 ├── data/
-│   ├── .gitkeep
-│   ├── train.csv
-│   ├── test.csv
-│   └── sample_submission.csv
-│
+|   ├── .gitkeep
+|   ├── train.csv
+|   ├── test.csv
+|   └── sample_submission.csv
+|
 ├── notebooks/
-│   ├── .gitkeep
-│   └── Smart_MCQ_Solver.ipynb
-│
+|   ├── .gitkeep
+|   └── Smart_MCQ_Solver.ipynb
+|
 ├── scripts/
-│   └── .gitkeep
-│
+|   └── .gitkeep
+|
 ├── .gitignore
 ├── app.py
 ├── README.md
 └── requirements.txt
 ```
 
----
+## Running the Project
 
-## ⚙️ Installation
-
-### 1. Clone the repository
+### Clone the repository
 
 ```bash
 git clone https://github.com/Vishwa19-P/dl-genai-project-26-t1.git
 cd dl-genai-project-26-t1
 ```
 
-### 2. Create a virtual environment
+### Create a virtual environment
 
-Windows:
+On Windows:
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 ```
 
-### 3. Install dependencies
+### Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 4. Run the Streamlit application
+### Run the Streamlit app
 
 ```bash
 streamlit run app.py
 ```
 
-The application will open in the browser.
+The app will open in the browser.
 
----
+## Security
 
-## 🔐 Secrets and Security
+No API keys or passwords are stored in the source code.
 
-The project does **not** store API keys in source code.
-
-For W&B-enabled notebook execution, provide the API key through a secure environment such as Kaggle Secrets using:
+If W&B is enabled when running the notebook, provide the key through a secure environment such as Kaggle Secrets:
 
 ```text
 WANDB_API_KEY
 ```
 
-Do not commit:
+Do not commit API keys, `.env` files, authentication tokens, or Streamlit secrets.
 
-- API keys
-- passwords
-- `.env` files
-- Streamlit secrets
-- authentication tokens
+## Evaluation Metrics
 
-These are excluded through `.gitignore` where appropriate.
+The main competition metric is MAP@3 because the task requires the system to return the top three answer options.
 
----
-
-## 🛠️ Technology Stack
-
-- **Python**
-- **Pandas / NumPy** — data preparation and numerical processing
-- **scikit-learn** — feature engineering, classical ML, validation, metrics
-- **Sentence Transformers** — pretrained MiniLM semantic embeddings
-- **Requests** — knowledge retrieval
-- **Streamlit** — interactive deployment
-- **Weights & Biases** — experiment tracking
-- **Kaggle** — competition evaluation
-- **Git / GitHub** — version control and project management
-
----
-
-## 📐 Evaluation Metrics
-
-Because the competition requires ranking the answer options, **MAP@3** is an important metric.
-
-Additional metrics used during model comparison and validation include:
+I also used:
 
 - Top-1 Accuracy
 - Macro F1
 - MAP@3
 
-MAP@3 rewards the system when the correct option appears near the top of the three returned predictions, which matches the project's top-three ranking objective.
+MAP@3 is particularly useful here because it considers whether the correct answer appears within the first three predictions and rewards better ranking.
 
----
+## Why GroupKFold?
 
-## 🔎 Key Design Decisions
+The five options for a question are related to the same question. If they are split independently, information from one question can appear in both training and validation data.
 
-### Why GroupKFold?
+Using the question ID as the group keeps all options from a question together and gives a more reliable validation setup.
 
-All five options for one question are structurally related. Splitting them independently can leak question-specific information between training and validation. GroupKFold prevents this by keeping each question entirely within one fold.
+## Why Use an Ensemble?
 
-### Why an ensemble?
+The different models capture different information from the text.
 
-The component models capture different signals. Combining normalized outputs can make the final ranking less dependent on any single model's behavior.
+The logistic ranking model, Naive Bayes model, question-level classifier, heuristic features, and Rank SGD model do not make their decisions in exactly the same way. Combining their normalized scores gives the final model several different signals instead of relying on a single classifier.
 
-### Why not include MiniLM in v4?
+## Limitations
 
-MiniLM was evaluated as a standalone semantic baseline. The official v4 competition submission was kept as the documented five-signal classical/engineered ensemble. MiniLM is instead used in the separate knowledge-assisted deployment layer.
+The official competition model is not a general-purpose language model. Its performance depends on the data distribution used for the competition.
 
-### Why add Wikipedia retrieval to the demo?
+The knowledge-assisted demo also has limitations:
 
-The competition model is optimized for its training distribution rather than arbitrary world knowledge. Retrieval supplies explicit evidence for general questions, while MiniLM provides semantic similarity between the question/evidence and candidate options.
+- retrieved sources may not always contain enough information
+- Wikipedia retrieval can fail or return less relevant pages
+- semantic similarity is not the same as factual reasoning
+- demo scores should not be interpreted as calibrated probabilities
 
----
+The Kaggle evaluation and the Streamlit demo are therefore treated as two different evaluation settings.
 
-## 📌 Reproducibility
+## Future Work
 
-The repository contains the final notebook, application code, dependency specification, and competition data used by the project.
+Some improvements I would consider next are:
 
-The notebook documents:
+- learning the ensemble weights instead of setting them manually
+- calibrating the individual model scores
+- improving retrieval and reranking
+- testing stronger pretrained language models
+- adding better error analysis
+- separating the inference pipeline into smaller reusable modules
+- evaluating the demo on a larger set of unseen questions
 
-- preprocessing,
-- feature engineering,
-- model training,
-- validation,
-- W&B tracking,
-- ensemble construction,
-- submission generation, and
-- Kaggle evaluation.
+## Project Links
 
-The final competition pipeline is the **v4 ensemble** described above.
+GitHub: https://github.com/Vishwa19-P/dl-genai-project-26-t1
 
----
+Streamlit: https://smart-mcq-solver-vishwa.streamlit.app
 
-## 🚧 Limitations
+W&B Project: `25f2004951-t22026`
 
-- The official Kaggle model is optimized for the competition data distribution and is not a general-purpose LLM.
-- Knowledge-assisted predictions depend on the availability and relevance of retrieved public sources.
-- Wikipedia retrieval can fail or return insufficient evidence for highly specialized or ambiguous questions.
-- The demo's score is a ranking signal, not a calibrated probability of correctness.
-- Kaggle leaderboard performance and general-purpose demo performance are separate evaluation settings.
+Kaggle: Smart MCQ Solver Challenge
 
----
-
-## 🔮 Future Work
-
-Potential extensions include:
-
-- learning ensemble weights from strictly grouped validation data,
-- calibrating component scores before blending,
-- stronger pretrained language models for semantic matching,
-- improved retrieval and reranking,
-- domain-specific knowledge sources,
-- richer error analysis, and
-- extracting the verified inference pipeline into a cleaner production architecture.
-
----
-
-## 📚 Project Artifacts
-
-- **GitHub:** https://github.com/Vishwa19-P/dl-genai-project-26-t1
-- **Live Streamlit Demo:** https://smart-mcq-solver-vishwa.streamlit.app
-- **W&B Project:** `25f2004951-t22026`
-- **Competition:** Kaggle Smart MCQ Solver Challenge
-
----
-
-## 👤 Author
+## Author
 
 **Vishwa Patel**
 
-B.Tech Computer Engineering — Dharmsinh Desai University (DDU)
+BS in Data Science, IIT Madras
 
-IIT Madras BS in Data Science
+B.Tech in Computer Engineering, Dharmsinh Desai University (DDU)
 
----
+## Project Status
 
-## ⭐ Project Status
+Completed.
 
-**Completed** — competition pipeline, evaluation, experiment tracking, GitHub repository, and deployed knowledge-assisted Streamlit demo are finalized.
+The final competition pipeline, Kaggle submission, W&B tracking, GitHub repository, and deployed Streamlit demo are in place.
