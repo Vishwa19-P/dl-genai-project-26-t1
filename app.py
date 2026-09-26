@@ -5,7 +5,9 @@ from collections import Counter
 
 import numpy as np
 import pandas as pd
+import requests
 import streamlit as st
+from sentence_transformers import SentenceTransformer
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_selection import SelectPercentile, chi2
@@ -348,6 +350,178 @@ def predict_one(prompt, options, models):
     return ranked
 
 
+
+@st.cache_resource
+def load_semantic_model():
+    """Load a pretrained MiniLM sentence-embedding model for the demo fallback."""
+    return SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def retrieve_wikipedia_context(query, max_pages=3):
+    """
+    Retrieve a small amount of public Wikipedia context for an arbitrary MCQ.
+    This is used only by the portfolio/demo mode; the official Kaggle v4
+    pipeline remains unchanged.
+    """
+    headers = {"User-Agent": "Smart-MCQ-Solver-Portfolio/1.0"}
+    search_url = "https://en.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "list": "search",
+        "srsearch": query,
+        "srlimit": max_pages,
+        "format": "json",
+        "utf8": 1,
+    }
+
+    response = requests.get(search_url, params=params, headers=headers, timeout=10)
+    response.raise_for_status()
+    search_results = response.json().get("query", {}).get("search", [])
+
+    pages = []
+    for result in search_results:
+        title = result.get("title", "")
+        snippet = re.sub(r"<[^>]+>", " ", result.get("snippet", ""))
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+
+        page_params = {
+            "action": "query",
+            "prop": "extracts",
+            "exintro": 1,
+            "explaintext": 1,
+            "titles": title,
+            "format": "json",
+            "utf8": 1,
+        }
+        page_response = requests.get(
+            search_url, params=page_params, headers=headers, timeout=10
+        )
+        page_response.raise_for_status()
+
+        pages_data = page_response.json().get("query", {}).get("pages", {})
+        extract = ""
+        for page in pages_data.values():
+            extract = page.get("extract", "") or ""
+            break
+
+        context = f"{title}. {extract} {snippet}".strip()
+        if context:
+            pages.append(
+                {
+                    "title": title,
+                    "context": context[:6000],
+                    "url": f"https://en.wikipedia.org/wiki/{title.replace(' ', '_')}",
+                }
+            )
+
+    return pages
+
+
+def knowledge_assisted_scores(prompt, options):
+    """
+    Score options using retrieved Wikipedia context plus a pretrained MiniLM
+    semantic similarity model.
+
+    The exact-match component helps factual MCQs when an answer appears
+    explicitly in the retrieved context. MiniLM provides semantic matching
+    when wording differs.
+    """
+    pages = retrieve_wikipedia_context(prompt, max_pages=3)
+    if not pages:
+        return None, []
+
+    semantic_model = load_semantic_model()
+
+    contexts = [page["context"] for page in pages]
+    context_embeddings = semantic_model.encode(
+        contexts, convert_to_tensor=True, normalize_embeddings=True
+    )
+
+    option_embeddings = semantic_model.encode(
+        options, convert_to_tensor=True, normalize_embeddings=True
+    )
+
+    scores = []
+    for option_idx, option in enumerate(options):
+        option_clean = normalize_text(option)
+        option_tokens = set(option_clean.split())
+
+        exact_score = 0.0
+        lexical_score = 0.0
+        semantic_score = 0.0
+
+        for page, context, context_embedding in zip(
+            pages, contexts, context_embeddings
+        ):
+            context_clean = normalize_text(context)
+
+            # Phrase-level match.
+            if option_clean and option_clean in context_clean:
+                exact_score = max(exact_score, 1.0)
+
+            # Token-level overlap.
+            context_tokens = set(context_clean.split())
+            lexical = safe_div(len(option_tokens & context_tokens), len(option_tokens))
+            lexical_score = max(lexical_score, lexical)
+
+            # Semantic similarity between the option and retrieved evidence.
+            similarity = float(
+                (option_embeddings[option_idx] * context_embedding).sum().item()
+            )
+            semantic_score = max(semantic_score, similarity)
+
+        # Exact evidence is deliberately strong; semantic similarity breaks ties.
+        combined = (
+            0.55 * exact_score
+            + 0.20 * lexical_score
+            + 0.25 * max(0.0, semantic_score)
+        )
+        scores.append(combined)
+
+    scores = np.asarray(scores, dtype=float)
+    if np.ptp(scores) > 0:
+        scores = (scores - scores.min()) / np.ptp(scores)
+    else:
+        scores = np.full(len(options), 0.5)
+
+    return scores, pages
+
+
+def knowledge_assisted_predict(prompt, options, v4_models):
+    """
+    Portfolio/demo prediction:
+      1. Run the official v4 competition ensemble.
+      2. Retrieve public Wikipedia evidence.
+      3. Use pretrained MiniLM + evidence matching to improve arbitrary
+         out-of-distribution questions.
+      4. Blend the two only for the demo; v4 itself is never modified.
+    """
+    v4_ranked = predict_one(prompt, options, v4_models)
+    v4_scores = np.zeros(len(OPTION_COLS), dtype=float)
+    for _, row in v4_ranked.iterrows():
+        v4_scores[OPTION_COLS.index(row["option"])] = row["blend_score_v4"]
+
+    knowledge_scores, pages = knowledge_assisted_scores(prompt, options)
+
+    if knowledge_scores is None:
+        return v4_ranked, False, []
+
+    # Give retrieved factual evidence the larger weight for arbitrary demo
+    # questions while retaining the competition model as a secondary signal.
+    final_scores = 0.75 * knowledge_scores + 0.25 * v4_scores
+
+    ranked = pd.DataFrame(
+        {
+            "option": OPTION_COLS,
+            "blend_score_v4": v4_scores,
+            "knowledge_score": knowledge_scores,
+            "final_demo_score": final_scores,
+        }
+    ).sort_values("final_demo_score", ascending=False).reset_index(drop=True)
+
+    return ranked, True, pages
+
+
 @st.cache_data
 
 def load_train_data():
@@ -362,42 +536,144 @@ def load_models():
     return train_models(train, test)
 
 
+
 st.set_page_config(page_title="Smart MCQ Solver", page_icon="🧠", layout="wide")
 
 st.title("🧠 Smart MCQ Solver")
-st.write("Enter a multiple-choice question and its five options. The final v4 ensemble ranks the options and returns the top 3 predictions.")
-st.caption("Final v4 ensemble: Logistic Ranking + Complement NB + Question-level TF-IDF + Heuristic + Rank SGD")
+st.write(
+    "A competition-trained MCQ ranking system with a knowledge-assisted "
+    "portfolio demo for arbitrary questions."
+)
+
+mode = st.radio(
+    "Prediction mode",
+    [
+        "Knowledge-assisted demo (recommended)",
+        "Official competition v4 ensemble",
+    ],
+    horizontal=True,
+)
+
+if mode.startswith("Knowledge"):
+    st.caption(
+        "Demo mode combines the official v4 ensemble with public Wikipedia "
+        "evidence and a pretrained MiniLM semantic model. This improves "
+        "out-of-distribution questions without changing the official Kaggle model."
+    )
+else:
+    st.caption(
+        "This is the exact v4 ensemble used for the competition submission: "
+        "Logistic Ranking + Complement NB + Question-level TF-IDF + Heuristic + Rank SGD."
+    )
 
 with st.form("mcq_form"):
-    prompt = st.text_area("Question", height=150, placeholder="Enter the MCQ question here...")
+    prompt = st.text_area(
+        "Question",
+        height=150,
+        placeholder="Enter the MCQ question here...",
+    )
+
     cols = st.columns(2)
     options = []
-    labels = OPTION_COLS
-    for i, label in enumerate(labels):
+    for i, label in enumerate(OPTION_COLS):
         with cols[i % 2]:
-            options.append(st.text_area(f"Option {label}", height=110, key=f"option_{label}"))
+            options.append(
+                st.text_area(
+                    f"Option {label}",
+                    height=110,
+                    key=f"option_{label}",
+                )
+            )
+
     if st.form_submit_button("🚀 Solve MCQ", type="primary"):
         if not prompt.strip() or any(not option.strip() for option in options):
             st.error("Please enter the question and all five options.")
         else:
-            with st.spinner("Loading the v4 ensemble and ranking the options... The first run may take a few minutes."):
+            with st.spinner(
+                "Loading the model and solving the MCQ... "
+                "The first run may take a few minutes."
+            ):
                 try:
                     models = load_models()
-                    ranked = predict_one(prompt, options, models)
+
+                    if mode.startswith("Knowledge"):
+                        ranked, used_knowledge, pages = knowledge_assisted_predict(
+                            prompt, options, models
+                        )
+                    else:
+                        ranked = predict_one(prompt, options, models)
+                        used_knowledge = False
+                        pages = []
+
                 except Exception as error:
-                    st.error(f"The model could not be loaded or executed: {type(error).__name__}: {error}")
+                    st.error(
+                        f"The model could not be loaded or executed: "
+                        f"{type(error).__name__}: {error}"
+                    )
                     st.stop()
 
+            if mode.startswith("Knowledge") and not used_knowledge:
+                st.warning(
+                    "External knowledge retrieval was unavailable, so the app "
+                    "fell back to the official v4 ensemble."
+                )
+
             st.subheader("Top 3 Predictions")
+
             for rank, (_, row) in enumerate(ranked.head(3).iterrows(), start=1):
-                st.success(f"#{rank} — Option {row['option']}  |  Ensemble score: {row['blend_score_v4']:.4f}")
-                st.write(options[OPTION_COLS.index(row['option'])])
+                option = row["option"]
+                if mode.startswith("Knowledge"):
+                    score = row["final_demo_score"]
+                    score_label = "Demo score"
+                else:
+                    score = row["blend_score_v4"]
+                    score_label = "V4 ensemble score"
+
+                st.success(
+                    f"#{rank} — Option {option}  | "
+                    f"{score_label}: {score:.4f}"
+                )
+                st.write(options[OPTION_COLS.index(option)])
 
             with st.expander("Show all five ranked options"):
-                display_df = ranked[["option", "blend_score_v4"]].copy()
-                display_df.columns = ["Option", "V4 Ensemble Score"]
-                display_df["V4 Ensemble Score"] = display_df["V4 Ensemble Score"].round(4)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                if mode.startswith("Knowledge"):
+                    display_df = ranked[
+                        ["option", "final_demo_score", "knowledge_score", "blend_score_v4"]
+                    ].copy()
+                    display_df.columns = [
+                        "Option",
+                        "Demo Score",
+                        "Knowledge Score",
+                        "V4 Ensemble Score",
+                    ]
+                    for col in display_df.columns[1:]:
+                        display_df[col] = display_df[col].round(4)
+                else:
+                    display_df = ranked[["option", "blend_score_v4"]].copy()
+                    display_df.columns = ["Option", "V4 Ensemble Score"]
+                    display_df["V4 Ensemble Score"] = (
+                        display_df["V4 Ensemble Score"].round(4)
+                    )
+
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+            if pages:
+                with st.expander("📚 Retrieved knowledge sources"):
+                    st.write(
+                        "The demo used these public Wikipedia pages as evidence:"
+                    )
+                    for page in pages:
+                        st.markdown(
+                            f"- [{page['title']}]({page['url']})"
+                        )
 
 st.divider()
-st.caption("Model selection and blend weights follow the final code-backed v4 pipeline in the project notebook.")
+st.caption(
+    "Official Kaggle model: v4 ensemble. "
+    "The knowledge-assisted mode is a separate portfolio/demo layer and "
+    "does not alter the submitted Kaggle model or its W&B results."
+)
